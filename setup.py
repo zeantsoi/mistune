@@ -59,29 +59,6 @@ else:
 
     cmdclass['build_ext'] = ve_build_ext
 
-# patch bdist_wheel
-try:
-    from wheel.bdist_wheel import bdist_wheel
-
-    REPLACE = (
-        'macosx_10_6_intel.'
-        'macosx_10_9_intel.'
-        'macosx_10_9_x86_64.'
-        'macosx_10_10_intel.'
-        'macosx_10_10_x86_64'
-    )
-
-    class _bdist_wheel(bdist_wheel):
-        def get_tag(self):
-            tag = bdist_wheel.get_tag(self)
-            if tag[2] == 'macosx_10_6_intel':
-                tag = (tag[0], tag[1], REPLACE)
-            return tag
-
-    cmdclass['bdist_wheel'] = _bdist_wheel
-except ImportError:
-    pass
-
 
 def fread(filepath):
     with open(filepath, 'r') as f:
@@ -89,7 +66,12 @@ def fread(filepath):
 
 
 def run_setup(with_binary):
-    ext_modules = [Extension('mistune', ['mistune.py'])] if with_binary else []
+    ext_modules = []
+    if with_binary:
+        ext_modules = [
+            Extension('mistune', ['mistune/__init__.py'])
+        ]
+
     setup(
         name='mistune',
         version=mistune.__version__,
@@ -99,7 +81,7 @@ def run_setup(with_binary):
         description='The fastest markdown parser in pure Python',
         long_description=fread('README.rst'),
         license='BSD',
-        py_modules=['mistune'],
+        packages=['mistune'],
         cmdclass=cmdclass,
         ext_modules=ext_modules,
         zip_safe=False,
@@ -117,6 +99,8 @@ def run_setup(with_binary):
             'Programming Language :: Python :: 2.7',
             'Programming Language :: Python :: 3.3',
             'Programming Language :: Python :: 3.4',
+            'Programming Language :: Python :: 3.5',
+            'Programming Language :: Python :: 3.6',
             'Programming Language :: Python :: Implementation :: CPython',
             'Programming Language :: Python :: Implementation :: PyPy',
             'Topic :: Text Processing :: Markup',
