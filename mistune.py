@@ -8,6 +8,7 @@
     :copyright: (c) 2014 - 2017 by Hsiaoming Yang.
 """
 
+import json
 import re
 import inspect
 
@@ -524,13 +525,34 @@ class InlineLexer(object):
         self._in_footnote = False
         self._parse_inline_html = kwargs.get('parse_inline_html')
 
+        self.json = JSONRenderer()
+        self.branch_nodes = []
+
     def __call__(self, text, rules=None):
-        return self.output(text, rules)
+        output = self.output(text, rules)
+        nodes = self.branch_nodes
+        self.branch_nodes = []
+        return nodes
 
     def setup(self, links, footnotes):
         self.footnote_index = 0
         self.links = links or {}
         self.footnotes = footnotes or {}
+
+    def text_formatting(self, text_formatting):
+        def traverse(d):
+            for k, v in d.iteritems():
+                if k == 'text':
+                    try:
+                        d['formatting'] += text_formatting
+                    except KeyError:
+                        # Not a text node, traverse further
+                        traverse(v)
+                else:
+                    if isinstance(v, dict):
+                        traverse(v)
+
+        traverse(self.branch_nodes[-1])
 
     def output(self, text, rules=None):
         text = text.rstrip('\n')
@@ -541,6 +563,7 @@ class InlineLexer(object):
             rules.remove('footnote')
 
         output = self.renderer.placeholder()
+        output = []
 
         def manipulate(text):
             for key in rules:
@@ -548,16 +571,22 @@ class InlineLexer(object):
                 m = pattern.match(text)
                 if not m:
                     continue
-                self.line_match = m
                 out = getattr(self, 'output_%s' % key)(m)
                 if out is not None:
-                    return m, out
+                    return m, out, key
             return False  # pragma: no cover
 
         while text:
             ret = manipulate(text)
             if ret is not False:
-                m, out = ret
+                m, out, rule = ret
+                text_formatting = self.json.inline_style(rule)
+                if rule == 'link':
+                    self.branch_nodes.append(out)
+                elif text_formatting == 0:
+                    self.branch_nodes.append(out)
+                else:
+                    self.text_formatting(text_formatting)
                 output += out
                 text = text[len(m.group(0)):]
                 continue
@@ -630,13 +659,14 @@ class InlineLexer(object):
     def _process_link(self, m, link, title=None):
         line = m.group(0)
         text = m.group(1)
-        if line[0] == '!':
-            return self.renderer.image(link, title, text)
-
-        self._in_link = True
-        text = self.output(text)
-        self._in_link = False
-        return self.renderer.link(link, title, text)
+        link_node = {
+            'type': 'link',
+            'props': {
+                'url': link,
+                'text': [self.output_text(None, text)],
+            }
+        }
+        return link_node
 
     def output_double_emphasis(self, m):
         text = m.group(2) or m.group(1)
@@ -659,9 +689,36 @@ class InlineLexer(object):
         text = self.output(m.group(1))
         return self.renderer.strikethrough(text)
 
-    def output_text(self, m):
-        text = m.group(0)
-        return self.renderer.text(text)
+    def output_text(self, m, text=None):
+        if not text:
+            text = m.group(0)
+        text_node = {
+            'type': 'text',
+            'props': {
+                'text': text,
+                'formatting': 0,
+            },
+        }
+        return text_node
+        # return self.renderer.text(text)
+
+
+class JSONRenderer(object):
+    formatting_flags = {
+        'double_emphasis': 1,
+        'emphasis': 2,
+        'underline': 4,
+        'strikethrough': 8,
+        'subscript': 16,
+        'superscript': 32,
+        'monospace': 64,
+    }
+
+    def inline_style(self, style):
+        try:
+            return self.formatting_flags[style]
+        except KeyError:
+            return 0
 
 
 class Renderer(object):
@@ -747,9 +804,15 @@ class Renderer(object):
         """Rendering list item snippet. Like ``<li>``."""
         return '<li>%s</li>\n' % text
 
-    def paragraph(self, text):
+    def paragraph(self, nodes):
         """Rendering paragraph tags. Like ``<p>``."""
-        return '<p>%s</p>\n' % text.strip(' ')
+        paragraph = {
+            'type': 'paragraph',
+            'props': {
+                'children': nodes,
+            },
+        }
+        return json.dumps(paragraph)
 
     def table(self, header, body):
         """Rendering table element. Wrap header and body in it.
